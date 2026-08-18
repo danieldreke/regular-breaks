@@ -3,12 +3,15 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("AyatanaAppIndicator3", "0.1")
 from gi.repository import Gtk, GLib, Gdk, AyatanaAppIndicator3 as AppIndicator3
-import argparse, os, time
+import argparse, os, sys, time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_PATH = os.path.abspath(__file__)
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.txt")
 ICON_DIR = os.path.join(SCRIPT_DIR, "icons")
 ICON_NAME = "coffee-cup"
+AUTOSTART_DIR = os.path.join(os.path.expanduser("~"), ".config", "autostart")
+AUTOSTART_DESKTOP_PATH = os.path.join(AUTOSTART_DIR, "regular-breaks.desktop")
 
 DEFAULTS = {
     "BREAK_INTERVAL_MIN": 30,
@@ -43,7 +46,6 @@ UNIT_LABEL = "min"  # unit shown on Postpone buttons
 
 def build_css():
     base_pt = system_font_pt()
-    button_pt = base_pt
     title_pt = base_pt * 2.4
     countdown_pt = base_pt * 5.4
     pause_button_pt = base_pt * 1.2
@@ -60,14 +62,7 @@ window.notify-popup {{
   border-radius: 8px;
   background-color: rgba(20, 20, 20, 0.3);
 }}
-window.notify-popup label {{
-  color: #ffffff;
-  text-shadow: {outline};
-}}
-window.notify-popup button {{
-  font-size: {button_pt}pt;
-  padding: 2px 9px;
-  min-height: 0;
+window.notify-popup label.message {{
   color: #ffffff;
   text-shadow: {outline};
 }}
@@ -97,6 +92,17 @@ def load_config():
             for k, v in DEFAULTS.items():
                 f.write(f"{k}={v}\n")
     return cfg
+
+
+def autostart_desktop_entry():
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Regular Breaks\n"
+        f"Exec={sys.executable} {SCRIPT_PATH}\n"
+        f"Icon={os.path.join(ICON_DIR, ICON_NAME + '.svg')}\n"
+        "X-GNOME-Autostart-enabled=true\n"
+    )
 
 
 FADE_IN_MS = 150
@@ -131,6 +137,7 @@ class NotifyPopup(Gtk.Window):
         self.get_style_context().add_class("notify-popup")
 
         self.label = Gtk.Label()
+        self.label.get_style_context().add_class("message")
         self.set_text(big, small)
         self.label.set_line_wrap(True)
         self.label.set_justify(Gtk.Justification.CENTER)
@@ -336,6 +343,11 @@ class BreakApp:
         self.disable_item.connect("toggled", self.on_toggle_disable)
         self.menu.append(self.disable_item)
 
+        self.start_on_login_item = Gtk.CheckMenuItem(label="Start on login")
+        self.start_on_login_item.set_active(os.path.exists(AUTOSTART_DESKTOP_PATH))
+        self.start_on_login_item.connect("toggled", self.on_toggle_start_on_login)
+        self.menu.append(self.start_on_login_item)
+
         self.menu.append(Gtk.SeparatorMenuItem())
         quit_item = Gtk.MenuItem(label="Quit")
         quit_item.connect("activate", self.quit)
@@ -484,6 +496,14 @@ class BreakApp:
             self.next_break += elapsed
             self.next_micro += elapsed
             self.disabled_at = None
+
+    def on_toggle_start_on_login(self, checkmenuitem):
+        if checkmenuitem.get_active():
+            os.makedirs(AUTOSTART_DIR, exist_ok=True)
+            with open(AUTOSTART_DESKTOP_PATH, "w") as f:
+                f.write(autostart_desktop_entry())
+        elif os.path.exists(AUTOSTART_DESKTOP_PATH):
+            os.remove(AUTOSTART_DESKTOP_PATH)
 
     def on_pause_timers(self, _item, minutes, label):
         now = time.time()
