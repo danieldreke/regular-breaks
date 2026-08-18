@@ -50,17 +50,17 @@ def build_css():
     countdown_pt = base_pt * 5.4
     pause_button_pt = base_pt * 1.2
     outline = """
-    -2px -2px 0 rgba(0, 0, 0, 1),
-     2px -2px 0 rgba(0, 0, 0, 1),
-    -2px  2px 0 rgba(0, 0, 0, 1),
-     2px  2px 0 rgba(0, 0, 0, 1),
-     0px   0px  6px  rgba(0, 0, 0, 0.95),
-     0px   0px  12px rgba(0, 0, 0, 0.85),
-     0px   0px  20px rgba(0, 0, 0, 0.7)"""
+    -1px -1px 0 rgba(0, 0, 0, 0.85),
+     1px -1px 0 rgba(0, 0, 0, 0.85),
+    -1px  1px 0 rgba(0, 0, 0, 0.85),
+     1px  1px 0 rgba(0, 0, 0, 0.85),
+     0px   0px  4px  rgba(0, 0, 0, 0.6)"""
     return f"""
 window.notify-popup {{
   border-radius: 8px;
-  background-color: rgba(20, 20, 20, 0.3);
+  padding: 6px;
+  background-color: rgba(20, 20, 20, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }}
 window.notify-popup label.message {{
   color: #ffffff;
@@ -125,7 +125,6 @@ class NotifyPopup(Gtk.Window):
         visual = screen.get_rgba_visual()
         if visual and screen.is_composited():
             self.set_visual(visual)
-        self.set_app_paintable(True)
         Gtk.Widget.set_opacity(self, 0.0)
         self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
         self.set_decorated(False)
@@ -149,9 +148,11 @@ class NotifyPopup(Gtk.Window):
         action = "break" if is_break else "micro-pause"
         postpone_btn = Gtk.Button(label=f"Take {action} in {postpone_min} {UNIT_LABEL}")
         postpone_btn.connect("clicked", lambda *_: on_postpone())
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_box.set_halign(Gtk.Align.CENTER)
-        btn_box.set_margin_bottom(8)
+        btn_box.set_margin_start(13)
+        btn_box.set_margin_end(13)
+        btn_box.set_margin_bottom(10)
         btn_box.pack_start(postpone_btn, False, False, 0)
         if is_break:
             skip_btn = Gtk.Button(label="Skip")
@@ -285,8 +286,10 @@ class BreakApp:
         self.micro_stage = None   # None -> countdown
         self.popups = {True: None, False: None}  # keyed by is_break
         self.active_window = None
-        self.timers_disabled = False
-        self.disabled_at = None
+        self.break_disabled = False
+        self.micro_disabled = False
+        self.break_disabled_at = None
+        self.micro_disabled_at = None
         self.paused_until = None
         self.pause_label = None
 
@@ -339,9 +342,15 @@ class BreakApp:
         pause_item.set_submenu(pause_submenu)
         self.menu.append(pause_item)
 
-        self.disable_item = Gtk.CheckMenuItem(label="Disable timers")
-        self.disable_item.connect("toggled", self.on_toggle_disable)
-        self.menu.append(self.disable_item)
+        self.disable_break_item = Gtk.CheckMenuItem(label="Disable break timer")
+        self.disable_break_item.connect("toggled", self.on_toggle_disable_break)
+        self.menu.append(self.disable_break_item)
+
+        self.disable_micro_item = Gtk.CheckMenuItem(label="Disable micro-pause timer")
+        self.disable_micro_item.connect("toggled", self.on_toggle_disable_micro)
+        self.menu.append(self.disable_micro_item)
+
+        self.menu.append(Gtk.SeparatorMenuItem())
 
         self.start_on_login_item = Gtk.CheckMenuItem(label="Start on login")
         self.start_on_login_item.set_active(os.path.exists(AUTOSTART_DESKTOP_PATH))
@@ -430,7 +439,11 @@ class BreakApp:
     def _fmt(seconds):
         seconds = max(0, int(seconds))
         m, s = divmod(seconds, 60)
-        return f"{m} min" if seconds > 180 else f"{m} min {s:02d}s"
+        if seconds >= 120:
+            return f"{m} min"
+        if m == 0:
+            return f"{s}s"
+        return f"{m} min {s:02d}s"
 
     def _update_status_label(self, now):
         break_dur = self.cfg["BREAK_DURATION_MIN"]
@@ -451,13 +464,17 @@ class BreakApp:
         self.resume_item.hide()
         self.break_item.show()
         self.micro_item.show()
-        if self.timers_disabled:
-            self.break_item.set_label(f"Next {break_dur} min break: disabled")
-            self.micro_item.set_label(f"Next {micro_dur}s micro-pause: disabled")
-            self.indicator.set_title("Timers disabled")
-            return
-        break_text = f"Next {break_dur} min break in {self._fmt(self.next_break - now)}"
-        micro_text = f"Next {micro_dur}s micro-pause in {self._fmt(self.next_micro - now)}"
+
+        if self.break_disabled:
+            break_text = f"Next {break_dur} min break: disabled"
+        else:
+            break_text = f"Next {break_dur} min break in {self._fmt(self.next_break - now)}"
+
+        if self.micro_disabled:
+            micro_text = f"Next {micro_dur}s micro-pause: disabled"
+        else:
+            micro_text = f"Next {micro_dur}s micro-pause in {self._fmt(self.next_micro - now)}"
+
         self.break_item.set_label(break_text)
         self.micro_item.set_label(micro_text)
         self.indicator.set_title(f"{break_text}\n{micro_text}")
@@ -482,20 +499,39 @@ class BreakApp:
         if self.active_window is None:
             self._start_pause(False)
 
-    def on_toggle_disable(self, checkmenuitem):
-        self.timers_disabled = checkmenuitem.get_active()
+    def on_toggle_disable_break(self, checkmenuitem):
+        self._set_disabled(True, checkmenuitem.get_active())
+
+    def on_toggle_disable_micro(self, checkmenuitem):
+        self._set_disabled(False, checkmenuitem.get_active())
+
+    def _set_disabled(self, is_break, active):
         now = time.time()
-        if self.timers_disabled:
-            self.disabled_at = now
+        if is_break:
+            self.break_disabled = active
+        else:
+            self.micro_disabled = active
+
+        if active:
+            if is_break:
+                self.break_disabled_at = now
+            else:
+                self.micro_disabled_at = now
             self.paused_until = None
             self.pause_label = None
-            self._dismiss_popup(True)
-            self._dismiss_popup(False)
-        elif self.disabled_at is not None:
-            elapsed = now - self.disabled_at
+            self._dismiss_popup(is_break)
+            return
+
+        disabled_at = self.break_disabled_at if is_break else self.micro_disabled_at
+        if disabled_at is None:
+            return
+        elapsed = now - disabled_at
+        if is_break:
             self.next_break += elapsed
+            self.break_disabled_at = None
+        else:
             self.next_micro += elapsed
-            self.disabled_at = None
+            self.micro_disabled_at = None
 
     def on_toggle_start_on_login(self, checkmenuitem):
         if checkmenuitem.get_active():
@@ -569,12 +605,11 @@ class BreakApp:
             self.paused_until = None
             self.pause_label = None
         self._update_status_label(now)
-        if self.timers_disabled:
-            return True
 
-        if self._process_break(now):
+        if not self.break_disabled and self._process_break(now):
             return True
-        self._process_micro(now)
+        if not self.micro_disabled:
+            self._process_micro(now)
         return True
 
     def quit(self, *_):
