@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Download (and optionally install) Time for a Break without needing git.
+"""Download (and optionally install) Regular Breaks without needing git.
 
     curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 -
     curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --install
+    curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --update
 """
 import argparse
 import io
@@ -18,7 +19,7 @@ REPO = "danieldreke/regular-breaks"
 def fetch_tarball(ref):
     url = f"https://github.com/{REPO}/archive/refs/heads/{ref}.tar.gz"
     print(f"Downloading {url} ...")
-    req = urllib.request.Request(url, headers={"User-Agent": "time-for-a-break-downloader"})
+    req = urllib.request.Request(url, headers={"User-Agent": "regular-breaks-downloader"})
     with urllib.request.urlopen(req) as response:
         return response.read()
 
@@ -29,7 +30,7 @@ def extract(data, dest):
         members = tar.getmembers()
         if not members:
             raise ValueError("downloaded archive is empty")
-        # Archive root is "<repo>-<ref>/...", e.g. "time-for-a-break-main/" -- strip it.
+        # Archive root is "<repo>-<ref>/...", e.g. "regular-breaks-main/" -- strip it.
         prefix = members[0].name.split("/")[0] + "/"
         for member in members:
             if not member.name.startswith(prefix):
@@ -45,7 +46,7 @@ def extract(data, dest):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download Time for a Break")
+    parser = argparse.ArgumentParser(description="Download Regular Breaks")
     parser.add_argument(
         "--dir", default="regular-breaks",
         help="target directory to download into (default: regular-breaks)",
@@ -58,18 +59,22 @@ def main():
         "--install", action="store_true",
         help="run install.py in the downloaded directory afterwards",
     )
+    parser.add_argument(
+        "--update", action="store_true",
+        help="overwrite an existing --dir with the latest files instead of erroring",
+    )
     args = parser.parse_args()
 
     dest = os.path.abspath(args.dir)
-    if os.path.exists(dest) and os.listdir(dest):
+    if os.path.exists(dest) and os.listdir(dest) and not args.update:
         print(f"Error: {dest} already exists and is not empty.", file=sys.stderr)
-        print("Remove it or pass --dir to choose a different location.", file=sys.stderr)
+        print("Remove it, pass --dir to choose a different location, or pass --update to overwrite.", file=sys.stderr)
         sys.exit(1)
     os.makedirs(dest, exist_ok=True)
 
     data = fetch_tarball(args.ref)
     extract(data, dest)
-    print(f"Downloaded to {dest}/")
+    print(f"{'Updated' if args.update else 'Downloaded to'} {dest}/")
 
     if args.install:
         print("Running install.py ...")

@@ -46,6 +46,17 @@ Either way, install checks that the dependencies above are present, makes
 your application menu. It does not enable autostart — use the tray
 icon's **Start on login** menu item for that (see below).
 
+## Update
+
+Re-downloads into an existing `--dir` instead of refusing to touch it,
+overwriting the app's own files with the latest version:
+
+```
+curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --update --install
+```
+
+`config.txt` isn't part of the repository, so your settings are left alone.
+
 ## Uninstall
 
 ```
