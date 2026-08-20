@@ -221,6 +221,7 @@ class FullscreenPause(Gtk.Window):
     def __init__(self, title, duration_sec, postpone_text, on_done, on_postpone, is_break):
         super().__init__()
         self.remaining = duration_sec
+        self.countdown_paused = False
         self.on_done = on_done
         self.on_postpone = on_postpone
         self.is_break = is_break
@@ -234,6 +235,11 @@ class FullscreenPause(Gtk.Window):
         title_label.get_style_context().add_class("title")
         self.countdown_label = Gtk.Label()
         self.countdown_label.get_style_context().add_class("countdown")
+        self.countdown_event_box = Gtk.EventBox()
+        self.countdown_event_box.add(self.countdown_label)
+        self.countdown_event_box.connect("button-press-event", self._on_countdown_clicked)
+        self.countdown_event_box.connect("enter-notify-event", self._on_countdown_enter)
+        self.countdown_event_box.connect("leave-notify-event", self._on_countdown_leave)
         self._update_countdown()
 
         action = "break" if is_break else "micro-pause"
@@ -251,7 +257,7 @@ class FullscreenPause(Gtk.Window):
         box.set_valign(Gtk.Align.CENTER)
         box.set_halign(Gtk.Align.CENTER)
         box.pack_start(title_label, False, False, 0)
-        box.pack_start(self.countdown_label, False, False, 0)
+        box.pack_start(self.countdown_event_box, False, False, 0)
         box.pack_start(btn_box, False, False, 0)
         self.add(box)
 
@@ -263,13 +269,17 @@ class FullscreenPause(Gtk.Window):
         GLib.timeout_add_seconds(1, self._tick)
 
     def _update_countdown(self):
-        if self.remaining >= 60:
+        if self.countdown_paused:
+            self.countdown_label.set_label("II")
+        elif self.remaining >= 60:
             self.countdown_label.set_label(f"{self.remaining // 60} min")
         else:
             m, s = divmod(self.remaining, 60)
             self.countdown_label.set_label(f"{m:02d}:{s:02d}")
 
     def _tick(self):
+        if self.countdown_paused:
+            return True
         self.remaining -= 1
         if self.remaining <= 0:
             self.destroy()
@@ -277,6 +287,17 @@ class FullscreenPause(Gtk.Window):
             return False
         self._update_countdown()
         return True
+
+    def _on_countdown_clicked(self, widget, event):
+        self.countdown_paused = not self.countdown_paused
+        self._update_countdown()
+
+    def _on_countdown_enter(self, widget, event):
+        cursor = Gdk.Cursor.new_from_name(widget.get_display(), "pointer")
+        widget.get_window().set_cursor(cursor)
+
+    def _on_countdown_leave(self, widget, event):
+        widget.get_window().set_cursor(None)
 
     def _skip(self, *_):
         self.destroy()
