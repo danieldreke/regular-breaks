@@ -21,11 +21,27 @@ sudo apt install python3-gi gir1.2-ayatanaappindicator3-0.1
 
 ## Install
 
+The quickest way — no `git` required. Downloads the repo into
+`./regular-breaks` and installs it in one step:
+
+```
+curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --install
+```
+
+Leave off `--install` to just download the files without installing:
+
+```
+curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 -
+```
+
+If you already have the repo locally (e.g. via `git clone`), install
+directly instead:
+
 ```
 python3 install.py
 ```
 
-This checks that the dependencies above are present, makes
+Either way, install checks that the dependencies above are present, makes
 `regular_breaks.py` executable, and adds a "Regular Breaks" entry to
 your application menu. It does not enable autostart — use the tray
 icon's **Start on login** menu item for that (see below).
@@ -70,27 +86,31 @@ Settings live in `config.txt`, next to the script — a flat
 `KEY=value` file, created with defaults on first run if it doesn't
 exist. Unknown or invalid lines are ignored.
 
+Values are durations written as a combination of `h`/`m`/`s`, in that
+order — e.g. `3m`, `10s`, `1h30m`, `20m10s`. At least one unit is
+required; bare numbers aren't valid.
+
 | Key | Default | Meaning |
 |---|---|---|
-| `BREAK_INTERVAL_MIN` | 30 | Minutes between breaks |
-| `BREAK_DURATION_MIN` | 5 | Length of a break |
-| `MICRO_INTERVAL_MIN` | 10 | Minutes between micro-pauses |
-| `MICRO_DURATION_SEC` | 20 | Length of a micro-pause |
-| `BREAK_FIRST_PREPARE_NOTICE_MIN` | 2 | First break prepare notice, minutes before |
-| `BREAK_SECOND_PREPARE_NOTICE_MIN` | 1 | Second break prepare notice, minutes before |
-| `BREAK_COUNTDOWN_SEC` | 30 | Final break countdown popup, seconds before |
-| `MICRO_COUNTDOWN_SEC` | 10 | Final micro-pause countdown popup, seconds before |
-| `POSTPONE_MIN` | 2 | Snooze length when postponing a break |
-| `MICRO_POSTPONE_MIN` | 1 | Snooze length when postponing a micro-pause |
+| `BREAK_INTERVAL` | `30m` | Time between breaks |
+| `BREAK_DURATION` | `5m` | Length of a break |
+| `MICRO_INTERVAL` | `10m` | Time between micro-pauses |
+| `MICRO_DURATION` | `20s` | Length of a micro-pause |
+| `BREAK_FIRST_PREPARE_NOTICE` | `2m` | First break prepare notice, time before |
+| `BREAK_SECOND_PREPARE_NOTICE` | `1m` | Second break prepare notice, time before |
+| `BREAK_COUNTDOWN` | `30s` | Final break countdown popup, time before |
+| `MICRO_COUNTDOWN` | `10s` | Final micro-pause countdown popup, time before |
+| `POSTPONE` | `2m` | Snooze length when postponing a break |
+| `MICRO_POSTPONE` | `1m` | Snooze length when postponing a micro-pause |
 
 ## Debug mode
 
 ```
-python3 regular_breaks.py -d [UNIT_SEC]
+python3 regular_breaks.py -d [SPEED]
 ```
 
-Runs with a separate set of short, in-script defaults and treats every
-`_MIN` value as seconds instead of minutes, so a full cycle finishes
-in well under a minute — useful for testing without editing
-`config.txt`. `UNIT_SEC` (1–60, default 1) sets how many real seconds
-count as one "minute" in debug mode.
+Runs with a separate set of short, in-script durations instead of
+`config.txt`, so a full cycle finishes in well under a minute — useful
+for testing without editing `config.txt`. `SPEED` (1–60, default 1)
+multiplies every debug duration by that many real seconds, letting you
+slow debug mode down instead of always running at full speed.

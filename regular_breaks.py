@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("AyatanaAppIndicator3", "0.1")
 from gi.repository import Gtk, GLib, Gdk, AyatanaAppIndicator3 as AppIndicator3
-import argparse, os, sys, time
+import argparse, os, re, sys, time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
@@ -14,35 +14,46 @@ AUTOSTART_DIR = os.path.join(os.path.expanduser("~"), ".config", "autostart")
 AUTOSTART_DESKTOP_PATH = os.path.join(AUTOSTART_DIR, "regular-breaks.desktop")
 
 DEFAULTS = {
-    "BREAK_INTERVAL_MIN": 30,
-    "BREAK_DURATION_MIN": 5,
-    "MICRO_INTERVAL_MIN": 10,
-    "MICRO_DURATION_SEC": 20,
-    "BREAK_FIRST_PREPARE_NOTICE_MIN": 2,
-    "BREAK_SECOND_PREPARE_NOTICE_MIN": 1,
-    "BREAK_COUNTDOWN_SEC": 30,
-    "MICRO_COUNTDOWN_SEC": 10,
-    "POSTPONE_MIN": 2,
-    "MICRO_POSTPONE_MIN": 1,
+    "BREAK_INTERVAL": "30m",
+    "BREAK_DURATION": "5m",
+    "MICRO_INTERVAL": "10m",
+    "MICRO_DURATION": "20s",
+    "BREAK_FIRST_PREPARE_NOTICE": "2m",
+    "BREAK_SECOND_PREPARE_NOTICE": "1m",
+    "BREAK_COUNTDOWN": "30s",
+    "MICRO_COUNTDOWN": "10s",
+    "POSTPONE": "2m",
+    "MICRO_POSTPONE": "1m",
 }
 
-# -d/--debug: use these instead of config.txt, with every _MIN value
-# treated as seconds (UNIT_SEC=1) so a full cycle takes well under a minute.
+# -d/--debug: use these instead of config.txt, so a full cycle takes well
+# under a minute at the default 1x speed. The optional SPEED argument
+# multiplies every one of these durations by that many seconds.
 DEBUG_DEFAULTS = {
-    "BREAK_INTERVAL_MIN": 20,
-    "BREAK_DURATION_MIN": 6,
-    "MICRO_INTERVAL_MIN": 8,
-    "MICRO_DURATION_SEC": 4,
-    "BREAK_FIRST_PREPARE_NOTICE_MIN": 10,
-    "BREAK_SECOND_PREPARE_NOTICE_MIN": 5,
-    "BREAK_COUNTDOWN_SEC": 4,
-    "MICRO_COUNTDOWN_SEC": 2,
-    "POSTPONE_MIN": 2,
-    "MICRO_POSTPONE_MIN": 1,
+    "BREAK_INTERVAL": "20s",
+    "BREAK_DURATION": "6s",
+    "MICRO_INTERVAL": "8s",
+    "MICRO_DURATION": "4s",
+    "BREAK_FIRST_PREPARE_NOTICE": "10s",
+    "BREAK_SECOND_PREPARE_NOTICE": "5s",
+    "BREAK_COUNTDOWN": "4s",
+    "MICRO_COUNTDOWN": "2s",
+    "POSTPONE": "2s",
+    "MICRO_POSTPONE": "1s",
 }
 
-UNIT_SEC = 60      # multiplier turning a "_MIN" value into seconds
-UNIT_LABEL = "min"  # unit shown on Postpone buttons
+_DURATION_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+
+
+def parse_duration(text):
+    """Parse a duration like '3m', '10s', '1h30m', '20m10s' into seconds."""
+    match = _DURATION_RE.match(text.strip().lower())
+    if not match:
+        raise ValueError(f"invalid duration: {text!r}")
+    h, m, s = (int(g) if g else 0 for g in match.groups())
+    if h == 0 and m == 0 and s == 0:
+        raise ValueError(f"invalid duration: {text!r}")
+    return h * 3600 + m * 60 + s
 
 def build_css():
     base_pt = system_font_pt()
@@ -73,7 +84,7 @@ window.pause-window button {{ font-size: {pause_button_pt}pt; padding: 8px 22px;
 
 
 def load_config():
-    cfg = dict(DEFAULTS)
+    cfg = {k: parse_duration(v) for k, v in DEFAULTS.items()}
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH) as f:
             for line in f:
@@ -84,7 +95,7 @@ def load_config():
                 key = key.strip().upper()
                 if key in DEFAULTS:
                     try:
-                        cfg[key] = int(val.strip())
+                        cfg[key] = parse_duration(val.strip())
                     except ValueError:
                         pass
     else:
@@ -92,6 +103,10 @@ def load_config():
             for k, v in DEFAULTS.items():
                 f.write(f"{k}={v}\n")
     return cfg
+
+
+def debug_cfg(speed):
+    return {k: parse_duration(v) * speed for k, v in DEBUG_DEFAULTS.items()}
 
 
 def autostart_desktop_entry():
@@ -119,7 +134,7 @@ def system_font_pt():
 
 
 class NotifyPopup(Gtk.Window):
-    def __init__(self, big, small, postpone_min, on_skip, on_postpone, is_break):
+    def __init__(self, big, small, postpone_text, on_skip, on_postpone, is_break):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
@@ -146,7 +161,7 @@ class NotifyPopup(Gtk.Window):
         self.label.set_margin_bottom(4)
 
         action = "break" if is_break else "micro-pause"
-        postpone_btn = Gtk.Button(label=f"Take {action} in {postpone_min} {UNIT_LABEL}")
+        postpone_btn = Gtk.Button(label=f"Take {action} in {postpone_text}")
         postpone_btn.connect("clicked", lambda *_: on_postpone())
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_box.set_halign(Gtk.Align.CENTER)
@@ -203,7 +218,7 @@ class NotifyPopup(Gtk.Window):
 
 
 class FullscreenPause(Gtk.Window):
-    def __init__(self, title, duration_sec, postpone_min, on_done, on_postpone, is_break):
+    def __init__(self, title, duration_sec, postpone_text, on_done, on_postpone, is_break):
         super().__init__()
         self.remaining = duration_sec
         self.on_done = on_done
@@ -222,7 +237,7 @@ class FullscreenPause(Gtk.Window):
         self._update_countdown()
 
         action = "break" if is_break else "micro-pause"
-        postpone_btn = Gtk.Button(label=f"Take {action} in {postpone_min} {UNIT_LABEL}")
+        postpone_btn = Gtk.Button(label=f"Take {action} in {postpone_text}")
         postpone_btn.connect("clicked", self._postpone)
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         btn_box.set_halign(Gtk.Align.CENTER)
@@ -277,11 +292,11 @@ class FullscreenPause(Gtk.Window):
 
 
 class BreakApp:
-    def __init__(self, debug=False):
-        self.cfg = dict(DEBUG_DEFAULTS) if debug else load_config()
+    def __init__(self, debug=False, debug_speed=1):
+        self.cfg = debug_cfg(debug_speed) if debug else load_config()
         now = time.time()
-        self.next_break = now + self.cfg["BREAK_INTERVAL_MIN"] * UNIT_SEC
-        self.next_micro = now + self.cfg["MICRO_INTERVAL_MIN"] * UNIT_SEC
+        self.next_break = now + self.cfg["BREAK_INTERVAL"]
+        self.next_micro = now + self.cfg["MICRO_INTERVAL"]
         self.break_stage = None   # None -> first_prepare_notice -> second_prepare_notice -> countdown
         self.micro_stage = None   # None -> countdown
         self.popups = {True: None, False: None}  # keyed by is_break
@@ -372,13 +387,16 @@ class BreakApp:
             popup.dismiss()
             self.popups[is_break] = None
 
-    def _postpone_min(self, is_break):
-        return self.cfg["POSTPONE_MIN"] if is_break else self.cfg["MICRO_POSTPONE_MIN"]
+    def _postpone_seconds(self, is_break):
+        return self.cfg["POSTPONE"] if is_break else self.cfg["MICRO_POSTPONE"]
+
+    def _postpone_text(self, is_break):
+        return self._fmt_duration(self._postpone_seconds(is_break))
 
     def _open_popup(self, big, small, is_break, auto_hide_sec=None):
         self._dismiss_popup(is_break)
         popup = NotifyPopup(
-            big, small, self._postpone_min(is_break),
+            big, small, self._postpone_text(is_break),
             on_skip=lambda: self._pause_finished(is_break),
             on_postpone=lambda: self._pause_postponed(is_break),
             is_break=is_break,
@@ -397,13 +415,13 @@ class BreakApp:
         self._dismiss_popup(True)
         self._dismiss_popup(False)
         if is_break:
-            duration = self.cfg["BREAK_DURATION_MIN"] * UNIT_SEC
+            duration = self.cfg["BREAK_DURATION"]
             title = "Time for a break"
         else:
-            duration = self.cfg["MICRO_DURATION_SEC"]
+            duration = self.cfg["MICRO_DURATION"]
             title = "Micro-pause"
         self.active_window = FullscreenPause(
-            title, duration, self._postpone_min(is_break),
+            title, duration, self._postpone_text(is_break),
             on_done=lambda: self._pause_finished(is_break),
             on_postpone=lambda: self._pause_postponed(is_break),
             is_break=is_break,
@@ -414,20 +432,20 @@ class BreakApp:
         self._dismiss_popup(is_break)
         now = time.time()
         if is_break:
-            self.next_break = now + self.cfg["BREAK_INTERVAL_MIN"] * UNIT_SEC
-            self.next_micro = now + self.cfg["MICRO_INTERVAL_MIN"] * UNIT_SEC
+            self.next_break = now + self.cfg["BREAK_INTERVAL"]
+            self.next_micro = now + self.cfg["MICRO_INTERVAL"]
             self.break_stage = None
             self.micro_stage = None
             self._dismiss_popup(False)
         else:
-            self.next_micro = now + self.cfg["MICRO_INTERVAL_MIN"] * UNIT_SEC
+            self.next_micro = now + self.cfg["MICRO_INTERVAL"]
             self.micro_stage = None
 
     def _pause_postponed(self, is_break):
         self.active_window = None
         self._dismiss_popup(is_break)
         now = time.time()
-        postpone_sec = self._postpone_min(is_break) * UNIT_SEC
+        postpone_sec = self._postpone_seconds(is_break)
         if is_break:
             self.next_break = now + postpone_sec
             self.break_stage = None
@@ -445,9 +463,23 @@ class BreakApp:
             return f"{s}s"
         return f"{m} min {s:02d}s"
 
+    @staticmethod
+    def _fmt_duration(seconds):
+        seconds = max(0, int(seconds))
+        h, remainder = divmod(seconds, 3600)
+        m, s = divmod(remainder, 60)
+        parts = []
+        if h:
+            parts.append(f"{h} hour" if h == 1 else f"{h} hours")
+        if m:
+            parts.append(f"{m} min")
+        if s or not parts:
+            parts.append(f"{s}s")
+        return " ".join(parts)
+
     def _update_status_label(self, now):
-        break_dur = self.cfg["BREAK_DURATION_MIN"]
-        micro_dur = self.cfg["MICRO_DURATION_SEC"]
+        break_dur_text = self._fmt_duration(self.cfg["BREAK_DURATION"])
+        micro_dur_text = self._fmt_duration(self.cfg["MICRO_DURATION"])
 
         if self.paused_until is not None:
             continues = self._fmt(self.paused_until - now)
@@ -466,14 +498,14 @@ class BreakApp:
         self.micro_item.show()
 
         if self.break_disabled:
-            break_text = f"Next {break_dur} min break: disabled"
+            break_text = f"Next {break_dur_text} break: disabled"
         else:
-            break_text = f"Next {break_dur} min break in {self._fmt(self.next_break - now)}"
+            break_text = f"Next {break_dur_text} break in {self._fmt(self.next_break - now)}"
 
         if self.micro_disabled:
-            micro_text = f"Next {micro_dur}s micro-pause: disabled"
+            micro_text = f"Next {micro_dur_text} micro-pause: disabled"
         else:
-            micro_text = f"Next {micro_dur}s micro-pause in {self._fmt(self.next_micro - now)}"
+            micro_text = f"Next {micro_dur_text} micro-pause in {self._fmt(self.next_micro - now)}"
 
         self.break_item.set_label(break_text)
         self.micro_item.set_label(micro_text)
@@ -481,8 +513,8 @@ class BreakApp:
 
     def on_reset(self, *_):
         now = time.time()
-        self.next_break = now + self.cfg["BREAK_INTERVAL_MIN"] * UNIT_SEC
-        self.next_micro = now + self.cfg["MICRO_INTERVAL_MIN"] * UNIT_SEC
+        self.next_break = now + self.cfg["BREAK_INTERVAL"]
+        self.next_micro = now + self.cfg["MICRO_INTERVAL"]
         self.break_stage = None
         self.micro_stage = None
         self.paused_until = None
@@ -546,8 +578,8 @@ class BreakApp:
         delay = minutes * 60
         self.paused_until = now + delay
         self.pause_label = label
-        self.next_break = self.paused_until + self.cfg["BREAK_INTERVAL_MIN"] * UNIT_SEC
-        self.next_micro = self.paused_until + self.cfg["MICRO_INTERVAL_MIN"] * UNIT_SEC
+        self.next_break = self.paused_until + self.cfg["BREAK_INTERVAL"]
+        self.next_micro = self.paused_until + self.cfg["MICRO_INTERVAL"]
         self.break_stage = None
         self.micro_stage = None
         self._dismiss_popup(True)
@@ -555,16 +587,16 @@ class BreakApp:
 
     def _process_break(self, now):
         remaining = self.next_break - now
-        dur = self.cfg["BREAK_DURATION_MIN"]
+        dur_text = self._fmt_duration(self.cfg["BREAK_DURATION"])
         if remaining <= 0:
             self._start_pause(True)
             return True
 
-        cd_sec = self.cfg["BREAK_COUNTDOWN_SEC"]
-        second_prepare_notice_sec = self.cfg["BREAK_SECOND_PREPARE_NOTICE_MIN"] * UNIT_SEC
-        first_prepare_notice_sec = self.cfg["BREAK_FIRST_PREPARE_NOTICE_MIN"] * UNIT_SEC
+        cd_sec = self.cfg["BREAK_COUNTDOWN"]
+        second_prepare_notice_sec = self.cfg["BREAK_SECOND_PREPARE_NOTICE"]
+        first_prepare_notice_sec = self.cfg["BREAK_FIRST_PREPARE_NOTICE"]
 
-        small = f"until {dur} min break"
+        small = f"until {dur_text} break"
         if remaining <= cd_sec:
             big = f"{int(remaining) + 1}s"
             if self.break_stage != "countdown":
@@ -573,24 +605,24 @@ class BreakApp:
             else:
                 self.popups[True].set_text(big, small)
         elif remaining <= second_prepare_notice_sec and self.break_stage not in ("second_prepare_notice", "countdown"):
-            self._open_popup(f"{self.cfg['BREAK_SECOND_PREPARE_NOTICE_MIN']} min", small, True, auto_hide_sec=10)
+            self._open_popup(self._fmt_duration(second_prepare_notice_sec), small, True, auto_hide_sec=10)
             self.break_stage = "second_prepare_notice"
         elif remaining <= first_prepare_notice_sec and self.break_stage is None:
-            self._open_popup(f"{self.cfg['BREAK_FIRST_PREPARE_NOTICE_MIN']} min", small, True, auto_hide_sec=10)
+            self._open_popup(self._fmt_duration(first_prepare_notice_sec), small, True, auto_hide_sec=10)
             self.break_stage = "first_prepare_notice"
         return False
 
     def _process_micro(self, now):
         remaining = self.next_micro - now
-        dur = self.cfg["MICRO_DURATION_SEC"]
+        dur_text = self._fmt_duration(self.cfg["MICRO_DURATION"])
         if remaining <= 0:
             self._start_pause(False)
             return
 
-        cd_sec = self.cfg["MICRO_COUNTDOWN_SEC"]
+        cd_sec = self.cfg["MICRO_COUNTDOWN"]
         if remaining <= cd_sec:
             big = f"{int(remaining) + 1}s"
-            small = f"until {dur}s micro-pause"
+            small = f"until {dur_text} micro-pause"
             if self.micro_stage != "countdown":
                 self._open_popup(big, small, False)
                 self.micro_stage = "countdown"
@@ -616,7 +648,7 @@ class BreakApp:
         Gtk.main_quit()
 
 
-def _debug_unit(value):
+def _debug_speed(value):
     v = int(value)
     if not 1 <= v <= 60:
         raise argparse.ArgumentTypeError("must be between 1 and 60")
@@ -624,25 +656,25 @@ def _debug_unit(value):
 
 
 def main():
-    global UNIT_SEC, UNIT_LABEL
     parser = argparse.ArgumentParser(description="Regular breaks tray app")
     parser.add_argument(
-        "-d", "--debug", nargs="?", type=_debug_unit, const=1, default=None,
-        metavar="UNIT_SEC",
-        help="debug mode: use in-script DEBUG_ constants; optional UNIT_SEC (1-60, "
-             "default 1) sets how many seconds count as one minute",
+        "-d", "--debug", nargs="?", type=_debug_speed, const=1, default=None,
+        metavar="SPEED",
+        help="debug mode: use in-script DEBUG_DEFAULTS durations instead of "
+             "config.txt; optional SPEED (1-60, default 1) multiplies every "
+             "debug duration by that many seconds",
     )
     args = parser.parse_args()
-    if args.debug is not None:
-        UNIT_SEC, UNIT_LABEL = args.debug, "s"
-        print(f"Debug mode: using DEBUG_DEFAULTS, 1 min == {UNIT_SEC}s")
+    debug = args.debug is not None
+    if debug:
+        print(f"Debug mode: using DEBUG_DEFAULTS, x{args.debug} speed multiplier")
 
     provider = Gtk.CssProvider()
     provider.load_from_data(build_css())
     Gtk.StyleContext.add_provider_for_screen(
         Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
-    BreakApp(debug=args.debug is not None)
+    BreakApp(debug=debug, debug_speed=args.debug or 1)
     Gtk.main()
 
 
