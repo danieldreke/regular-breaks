@@ -18,8 +18,8 @@ DEFAULTS = {
     "BREAK_DURATION_MIN": 5,
     "MICRO_INTERVAL_MIN": 10,
     "MICRO_DURATION_SEC": 20,
-    "BREAK_WARN_1_MIN": 2,
-    "BREAK_WARN_2_MIN": 1,
+    "BREAK_FIRST_PREPARE_NOTICE_MIN": 2,
+    "BREAK_SECOND_PREPARE_NOTICE_MIN": 1,
     "BREAK_COUNTDOWN_SEC": 30,
     "MICRO_COUNTDOWN_SEC": 10,
     "POSTPONE_MIN": 2,
@@ -33,8 +33,8 @@ DEBUG_DEFAULTS = {
     "BREAK_DURATION_MIN": 6,
     "MICRO_INTERVAL_MIN": 8,
     "MICRO_DURATION_SEC": 4,
-    "BREAK_WARN_1_MIN": 10,
-    "BREAK_WARN_2_MIN": 5,
+    "BREAK_FIRST_PREPARE_NOTICE_MIN": 10,
+    "BREAK_SECOND_PREPARE_NOTICE_MIN": 5,
     "BREAK_COUNTDOWN_SEC": 4,
     "MICRO_COUNTDOWN_SEC": 2,
     "POSTPONE_MIN": 2,
@@ -282,7 +282,7 @@ class BreakApp:
         now = time.time()
         self.next_break = now + self.cfg["BREAK_INTERVAL_MIN"] * UNIT_SEC
         self.next_micro = now + self.cfg["MICRO_INTERVAL_MIN"] * UNIT_SEC
-        self.break_stage = None   # None -> warn1 -> warn2 -> countdown
+        self.break_stage = None   # None -> first_prepare_notice -> second_prepare_notice -> countdown
         self.micro_stage = None   # None -> countdown
         self.popups = {True: None, False: None}  # keyed by is_break
         self.active_window = None
@@ -561,8 +561,8 @@ class BreakApp:
             return True
 
         cd_sec = self.cfg["BREAK_COUNTDOWN_SEC"]
-        warn2_sec = self.cfg["BREAK_WARN_2_MIN"] * UNIT_SEC
-        warn1_sec = self.cfg["BREAK_WARN_1_MIN"] * UNIT_SEC
+        second_prepare_notice_sec = self.cfg["BREAK_SECOND_PREPARE_NOTICE_MIN"] * UNIT_SEC
+        first_prepare_notice_sec = self.cfg["BREAK_FIRST_PREPARE_NOTICE_MIN"] * UNIT_SEC
 
         small = f"until {dur} min break"
         if remaining <= cd_sec:
@@ -572,12 +572,12 @@ class BreakApp:
                 self.break_stage = "countdown"
             else:
                 self.popups[True].set_text(big, small)
-        elif remaining <= warn2_sec and self.break_stage not in ("warn2", "countdown"):
-            self._open_popup(f"{self.cfg['BREAK_WARN_2_MIN']} min", small, True, auto_hide_sec=10)
-            self.break_stage = "warn2"
-        elif remaining <= warn1_sec and self.break_stage is None:
-            self._open_popup(f"{self.cfg['BREAK_WARN_1_MIN']} min", small, True, auto_hide_sec=10)
-            self.break_stage = "warn1"
+        elif remaining <= second_prepare_notice_sec and self.break_stage not in ("second_prepare_notice", "countdown"):
+            self._open_popup(f"{self.cfg['BREAK_SECOND_PREPARE_NOTICE_MIN']} min", small, True, auto_hide_sec=10)
+            self.break_stage = "second_prepare_notice"
+        elif remaining <= first_prepare_notice_sec and self.break_stage is None:
+            self._open_popup(f"{self.cfg['BREAK_FIRST_PREPARE_NOTICE_MIN']} min", small, True, auto_hide_sec=10)
+            self.break_stage = "first_prepare_notice"
         return False
 
     def _process_micro(self, now):
