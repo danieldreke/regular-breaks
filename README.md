@@ -1,5 +1,7 @@
 # Regular Breaks
 
+![Claude](https://img.shields.io/badge/Built_With-Claude-D97757?style=flat&logo=claude&logoColor=D97757) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A GTK3 tray app for Linux that reminds you to take regular breaks and
 short micro-pauses, with a countdown, prepare notices, and a fullscreen
 break/pause overlay you can skip or postpone.
