@@ -634,6 +634,8 @@ class BreakApp:
         return False
 
     def _process_micro(self, now):
+        if not self.break_disabled and self.next_break - now < self.cfg["MICRO_INTERVAL"]:
+            return
         remaining = self.next_micro - now
         dur_text = self._fmt_duration(self.cfg["MICRO_DURATION"])
         if remaining <= 0:
