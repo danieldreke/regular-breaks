@@ -459,16 +459,21 @@ class BreakApp:
         self.locked_at = None
         self._log("screen unlocked")
         if locked_for >= self.cfg["MICRO_DURATION"]:
-            self.next_micro = now + self.cfg["MICRO_INTERVAL"]
+            self.next_micro = self._due_after_pause(now + self.cfg["MICRO_INTERVAL"])
             self.micro_stage = None
             self._dismiss_popup(False)
             self._log("micro timer reset by screen unlock")
         if locked_for >= self.cfg["BREAK_DURATION"]:
-            self.next_break = now + self.cfg["BREAK_INTERVAL"]
+            self.next_break = self._due_after_pause(now + self.cfg["BREAK_INTERVAL"])
             self.break_stage = None
             self._dismiss_popup(True)
             self._log("break timer reset by screen unlock")
         self._update_status_label(now)
+
+    def _due_after_pause(self, due):
+        if self.paused_until is not None and due < self.paused_until:
+            return self.paused_until
+        return due
 
     def _log(self, event):
         stamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -658,8 +663,6 @@ class BreakApp:
                 self.break_disabled_at = now
             else:
                 self.micro_disabled_at = now
-            self.paused_until = None
-            self.pause_label = None
             self._dismiss_popup(is_break)
             self._log(f"{self._kind(is_break)} timer disabled")
             return
@@ -693,16 +696,21 @@ class BreakApp:
 
     def on_pause_timers(self, _item, minutes, label):
         now = time.time()
-        delay = minutes * 60
-        self.paused_until = now + delay
+        new_until = now + minutes * 60
+        if self.paused_until is not None and self.paused_until > now:
+            shift = new_until - self.paused_until
+        else:
+            shift = new_until - now
+        self.paused_until = new_until
         self.pause_label = label
-        self.next_break = self.paused_until + self.cfg["BREAK_INTERVAL"]
-        self.next_micro = self.paused_until + self.cfg["MICRO_INTERVAL"]
+        self.next_break += shift
+        self.next_micro += shift
         self.break_stage = None
         self.micro_stage = None
         self._dismiss_popup(True)
         self._dismiss_popup(False)
         self._log(f"timers paused for {label}")
+        self._update_status_label(now)
 
     def _process_break(self, now):
         remaining = self.next_break - now
@@ -754,7 +762,10 @@ class BreakApp:
         if self.active_window is not None:
             return True
         now = time.time()
-        if self.paused_until is not None and now >= self.paused_until:
+        if self.paused_until is not None:
+            if now < self.paused_until:
+                self._update_status_label(now)
+                return True
             self.paused_until = None
             self.pause_label = None
             self._log("timers pause ended")
