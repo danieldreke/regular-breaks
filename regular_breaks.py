@@ -2,7 +2,7 @@
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("AyatanaAppIndicator3", "0.1")
-from gi.repository import Gtk, GLib, Gdk, AyatanaAppIndicator3 as AppIndicator3
+from gi.repository import Gtk, GLib, Gdk, Gio, AyatanaAppIndicator3 as AppIndicator3
 import argparse, os, re, sys, time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -12,6 +12,7 @@ ICON_DIR = os.path.join(SCRIPT_DIR, "icons")
 ICON_NAME = "coffee-cup"
 AUTOSTART_DIR = os.path.join(os.path.expanduser("~"), ".config", "autostart")
 AUTOSTART_DESKTOP_PATH = os.path.join(AUTOSTART_DIR, "regular-breaks.desktop")
+LOG_PATH = os.path.join(SCRIPT_DIR, "regular-breaks.log")
 
 DEFAULTS = {
     "BREAK_INTERVAL": "30m",
@@ -218,7 +219,7 @@ class NotifyPopup(Gtk.Window):
 
 
 class FullscreenPause(Gtk.Window):
-    def __init__(self, title, duration_sec, postpone_text, on_done, on_postpone, is_break):
+    def __init__(self, title, duration_sec, postpone_text, on_done, on_postpone, is_break, on_skip=None):
         super().__init__()
         self.remaining = duration_sec
         self.countdown_paused = False
@@ -261,6 +262,7 @@ class FullscreenPause(Gtk.Window):
         box.pack_start(btn_box, False, False, 0)
         self.add(box)
 
+        self.on_skip = on_skip if on_skip else on_done
         self.connect("key-press-event", self._on_key)
         self.connect("delete-event", lambda *a: True)
 
@@ -301,7 +303,7 @@ class FullscreenPause(Gtk.Window):
 
     def _skip(self, *_):
         self.destroy()
-        self.on_done()
+        self.on_skip()
 
     def _postpone(self, *_):
         self.destroy()
@@ -328,6 +330,8 @@ class BreakApp:
         self.micro_disabled_at = None
         self.paused_until = None
         self.pause_label = None
+        self.locked_at = None
+        self.log_path = LOG_PATH
 
         self.indicator = AppIndicator3.Indicator.new(
             "regular-breaks",
@@ -388,6 +392,12 @@ class BreakApp:
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
+        log_item = Gtk.MenuItem(label="Show log")
+        log_item.connect("activate", self.on_show_log)
+        self.menu.append(log_item)
+
+        self.menu.append(Gtk.SeparatorMenuItem())
+
         self.start_on_login_item = Gtk.CheckMenuItem(label="Start on login")
         self.start_on_login_item.set_active(os.path.exists(AUTOSTART_DESKTOP_PATH))
         self.start_on_login_item.connect("toggled", self.on_toggle_start_on_login)
@@ -401,6 +411,72 @@ class BreakApp:
         self.indicator.set_menu(self.menu)
 
         GLib.timeout_add_seconds(1, self.tick)
+        self._watch_screen_lock()
+        self._log("app started")
+
+    def _watch_screen_lock(self):
+        session_id = os.environ.get("XDG_SESSION_ID", "")
+        if not session_id:
+            return
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            manager = Gio.DBusProxy.new_sync(
+                bus, Gio.DBusProxyFlags.NONE, None,
+                "org.freedesktop.login1", "/org/freedesktop/login1",
+                "org.freedesktop.login1.Manager", None,
+            )
+            session_path = manager.call_sync(
+                "GetSession", GLib.Variant("(s)", (session_id,)),
+                Gio.DBusCallFlags.NONE, -1, None,
+            ).unpack()[0]
+            self._session = Gio.DBusProxy.new_sync(
+                bus, Gio.DBusProxyFlags.NONE, None,
+                "org.freedesktop.login1", session_path,
+                "org.freedesktop.login1.Session", None,
+            )
+            self._session.connect("g-properties-changed", self._on_session_properties)
+            locked = self._session.get_cached_property("LockedHint")
+            if locked is not None and locked.unpack():
+                self.locked_at = time.time()
+        except GLib.Error as error:
+            print(f"Screen lock watch unavailable: {error.message}", file=sys.stderr)
+
+    def _on_session_properties(self, _proxy, changed, _invalidated):
+        props = changed.unpack()
+        if "LockedHint" in props:
+            self._on_screen_locked(props["LockedHint"])
+
+    def _on_screen_locked(self, locked):
+        now = time.time()
+        if locked:
+            if self.locked_at is None:
+                self.locked_at = now
+                self._log("screen locked")
+            return
+        if self.locked_at is None:
+            return
+        locked_for = now - self.locked_at
+        self.locked_at = None
+        self._log("screen unlocked")
+        if locked_for >= self.cfg["MICRO_DURATION"]:
+            self.next_micro = now + self.cfg["MICRO_INTERVAL"]
+            self.micro_stage = None
+            self._dismiss_popup(False)
+            self._log("micro timer reset by screen unlock")
+        if locked_for >= self.cfg["BREAK_DURATION"]:
+            self.next_break = now + self.cfg["BREAK_INTERVAL"]
+            self.break_stage = None
+            self._dismiss_popup(True)
+            self._log("break timer reset by screen unlock")
+        self._update_status_label(now)
+
+    def _log(self, event):
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(self.log_path, "a") as f:
+            f.write(f"{stamp}  {event}\n")
+
+    def _kind(self, is_break):
+        return "break" if is_break else "micro-pause"
 
     def _dismiss_popup(self, is_break):
         popup = self.popups[is_break]
@@ -418,7 +494,7 @@ class BreakApp:
         self._dismiss_popup(is_break)
         popup = NotifyPopup(
             big, small, self._postpone_text(is_break),
-            on_skip=lambda: self._pause_finished(is_break),
+            on_skip=lambda: self._pause_finished(is_break, skipped=True),
             on_postpone=lambda: self._pause_postponed(is_break),
             is_break=is_break,
         )
@@ -446,11 +522,17 @@ class BreakApp:
             on_done=lambda: self._pause_finished(is_break),
             on_postpone=lambda: self._pause_postponed(is_break),
             is_break=is_break,
+            on_skip=lambda: self._pause_finished(is_break, skipped=True),
         )
+        self._log(f"{self._kind(is_break)} started")
 
-    def _pause_finished(self, is_break):
+    def _pause_finished(self, is_break, skipped=False):
         self.active_window = None
         self._dismiss_popup(is_break)
+        if skipped:
+            self._log(f"{self._kind(is_break)} skipped")
+        else:
+            self._log(f"{self._kind(is_break)} ended")
         now = time.time()
         if is_break:
             self.next_break = now + self.cfg["BREAK_INTERVAL"]
@@ -473,6 +555,7 @@ class BreakApp:
         else:
             self.next_micro = now + postpone_sec
             self.micro_stage = None
+        self._log(f"{self._kind(is_break)} postponed")
 
     @staticmethod
     def _fmt(seconds):
@@ -532,7 +615,7 @@ class BreakApp:
         self.micro_item.set_label(micro_text)
         self.indicator.set_title(f"{break_text}\n{micro_text}")
 
-    def on_reset(self, *_):
+    def on_reset(self, widget=None, *_):
         now = time.time()
         self.next_break = now + self.cfg["BREAK_INTERVAL"]
         self.next_micro = now + self.cfg["MICRO_INTERVAL"]
@@ -542,6 +625,11 @@ class BreakApp:
         self.pause_label = None
         self._dismiss_popup(True)
         self._dismiss_popup(False)
+        if widget is self.resume_item:
+            self._log("break timer reset")
+            self._log("micro timer reset")
+        else:
+            self._log("timers reset by user")
         self._update_status_label(now)
 
     def on_take_break_now(self, *_):
@@ -573,6 +661,7 @@ class BreakApp:
             self.paused_until = None
             self.pause_label = None
             self._dismiss_popup(is_break)
+            self._log(f"{self._kind(is_break)} timer disabled")
             return
 
         disabled_at = self.break_disabled_at if is_break else self.micro_disabled_at
@@ -585,6 +674,14 @@ class BreakApp:
         else:
             self.next_micro += elapsed
             self.micro_disabled_at = None
+        self._log(f"{self._kind(is_break)} timer enabled")
+
+    def on_show_log(self, *_):
+        if not os.path.exists(self.log_path):
+            open(self.log_path, "a").close()
+        Gio.AppInfo.launch_default_for_uri(
+            Gio.File.new_for_path(self.log_path).get_uri(), None,
+        )
 
     def on_toggle_start_on_login(self, checkmenuitem):
         if checkmenuitem.get_active():
@@ -605,6 +702,7 @@ class BreakApp:
         self.micro_stage = None
         self._dismiss_popup(True)
         self._dismiss_popup(False)
+        self._log(f"timers paused for {label}")
 
     def _process_break(self, now):
         remaining = self.next_break - now
@@ -659,6 +757,7 @@ class BreakApp:
         if self.paused_until is not None and now >= self.paused_until:
             self.paused_until = None
             self.pause_label = None
+            self._log("timers pause ended")
         self._update_status_label(now)
 
         if not self.break_disabled and self._process_break(now):
@@ -668,6 +767,7 @@ class BreakApp:
         return True
 
     def quit(self, *_):
+        self._log("app quit")
         Gtk.main_quit()
 
 
