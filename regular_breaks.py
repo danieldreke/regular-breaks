@@ -415,6 +415,10 @@ class BreakApp:
         self._log("app started")
 
     def _watch_screen_lock(self):
+        self._watch_logind_lock()
+        self._watch_screensaver()
+
+    def _watch_logind_lock(self):
         session_id = os.environ.get("XDG_SESSION_ID", "")
         if not session_id:
             return
@@ -439,12 +443,33 @@ class BreakApp:
             if locked is not None and locked.unpack():
                 self.locked_at = time.time()
         except GLib.Error as error:
-            print(f"Screen lock watch unavailable: {error.message}", file=sys.stderr)
+            print(f"logind lock watch unavailable: {error.message}", file=sys.stderr)
+
+    def _watch_screensaver(self):
+        self._screensaver_proxies = []
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        for name, path in (
+            ("org.cinnamon.ScreenSaver", "/org/cinnamon/ScreenSaver"),
+            ("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver"),
+        ):
+            try:
+                proxy = Gio.DBusProxy.new_sync(
+                    bus, Gio.DBusProxyFlags.DO_NOT_AUTO_START, None,
+                    name, path, name, None,
+                )
+                proxy.connect("g-signal", self._on_screensaver_signal)
+                self._screensaver_proxies.append(proxy)
+            except GLib.Error as error:
+                print(f"{name} watch unavailable: {error.message}", file=sys.stderr)
 
     def _on_session_properties(self, _proxy, changed, _invalidated):
         props = changed.unpack()
         if "LockedHint" in props:
             self._on_screen_locked(props["LockedHint"])
+
+    def _on_screensaver_signal(self, _proxy, _sender, signal, params):
+        if signal == "ActiveChanged":
+            self._on_screen_locked(params.unpack()[0])
 
     def _on_screen_locked(self, locked):
         now = time.time()
