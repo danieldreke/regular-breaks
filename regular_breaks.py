@@ -135,7 +135,7 @@ def system_font_pt():
 
 
 class NotifyPopup(Gtk.Window):
-    def __init__(self, big, small, on_skip, on_postpone, is_break):
+    def __init__(self, big, small, on_skip, on_postpone):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
@@ -168,11 +168,10 @@ class NotifyPopup(Gtk.Window):
         btn_box.set_margin_start(13)
         btn_box.set_margin_end(13)
         btn_box.set_margin_bottom(10)
+        skip_btn = Gtk.Button(label="Skip")
+        skip_btn.connect("clicked", lambda *_: on_skip())
         btn_box.pack_start(postpone_btn, False, False, 0)
-        if is_break:
-            skip_btn = Gtk.Button(label="Skip")
-            skip_btn.connect("clicked", lambda *_: on_skip())
-            btn_box.pack_start(skip_btn, False, False, 0)
+        btn_box.pack_start(skip_btn, False, False, 0)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         box.pack_start(self.label, False, False, 0)
@@ -525,7 +524,6 @@ class BreakApp:
             big, small,
             on_skip=lambda: self._pause_finished(is_break, skipped=True),
             on_postpone=lambda: self._pause_postponed(is_break),
-            is_break=is_break,
         )
         self.popups[is_break] = popup
         if auto_hide_sec:
