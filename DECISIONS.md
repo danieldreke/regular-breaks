@@ -12,4 +12,6 @@ Implemented in `regular_breaks.py`: `_process_micro` returns early on that gap, 
 
 On unlock, the app reads how long the logind session stayed locked (`LockedHint`). A lock of at least `MICRO_DURATION` restarts the micro-pause timer for a full `MICRO_INTERVAL`. A lock of at least `BREAK_DURATION` restarts the break timer for a full `BREAK_INTERVAL`. Each restart is measured from unlock, and that timer's notice is cleared.
 
-Implemented in `regular_breaks.py`: `_watch_screen_lock` and `_on_screen_locked`.
+A break or micro-pause does not start while the screen is locked. `tick()` updates the tray label and returns while `locked_at` is set, so a timer that becomes due behind the lock screen waits until unlock. A long enough lock then restarts that timer before the next tick. A shorter lock leaves the timer as it is, so an overdue pause starts on the first tick after unlock. "Take Break Now" and "Take Micro-pause Now" still start immediately.
+
+Implemented in `regular_breaks.py`: `_watch_screen_lock`, `_on_screen_locked`, and the `locked_at` return in `tick()`.

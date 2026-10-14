@@ -794,6 +794,8 @@ class BreakApp:
             self.pause_label = None
             self._log("timers pause ended")
         self._update_status_label(now)
+        if self.locked_at is not None:
+            return True
 
         if not self.break_disabled and self._process_break(now):
             return True
