@@ -135,7 +135,7 @@ def system_font_pt():
 
 
 class NotifyPopup(Gtk.Window):
-    def __init__(self, big, small, postpone_text, on_skip, on_postpone, is_break):
+    def __init__(self, big, small, on_skip, on_postpone, is_break):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
@@ -161,8 +161,7 @@ class NotifyPopup(Gtk.Window):
         self.label.set_margin_top(8)
         self.label.set_margin_bottom(4)
 
-        action = "break" if is_break else "micro-pause"
-        postpone_btn = Gtk.Button(label=f"Take {action} in {postpone_text}")
+        postpone_btn = Gtk.Button(label="Postpone")
         postpone_btn.connect("clicked", lambda *_: on_postpone())
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_box.set_halign(Gtk.Align.CENTER)
@@ -219,7 +218,7 @@ class NotifyPopup(Gtk.Window):
 
 
 class FullscreenPause(Gtk.Window):
-    def __init__(self, title, duration_sec, postpone_text, on_done, on_postpone, is_break, on_skip=None):
+    def __init__(self, title, duration_sec, on_done, on_postpone, is_break, on_skip=None):
         super().__init__()
         self.remaining = duration_sec
         self.countdown_paused = False
@@ -243,16 +242,14 @@ class FullscreenPause(Gtk.Window):
         self.countdown_event_box.connect("leave-notify-event", self._on_countdown_leave)
         self._update_countdown()
 
-        action = "break" if is_break else "micro-pause"
-        postpone_btn = Gtk.Button(label=f"Take {action} in {postpone_text}")
+        postpone_btn = Gtk.Button(label="Postpone")
         postpone_btn.connect("clicked", self._postpone)
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         btn_box.set_halign(Gtk.Align.CENTER)
         btn_box.pack_start(postpone_btn, False, False, 0)
-        if is_break:
-            skip_btn = Gtk.Button(label="Skip")
-            skip_btn.connect("clicked", self._skip)
-            btn_box.pack_start(skip_btn, False, False, 0)
+        skip_btn = Gtk.Button(label="Skip")
+        skip_btn.connect("clicked", self._skip)
+        btn_box.pack_start(skip_btn, False, False, 0)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
         box.set_valign(Gtk.Align.CENTER)
@@ -280,10 +277,11 @@ class FullscreenPause(Gtk.Window):
             self.countdown_label.set_label(f"{m:02d}:{s:02d}")
 
     def _tick(self):
-        if self.countdown_paused:
-            return True
+        if self.remaining is None or self.countdown_paused:
+            return self.remaining is not None
         self.remaining -= 1
         if self.remaining <= 0:
+            self.remaining = None
             self.destroy()
             self.on_done()
             return False
@@ -301,12 +299,16 @@ class FullscreenPause(Gtk.Window):
     def _on_countdown_leave(self, widget, event):
         widget.get_window().set_cursor(None)
 
-    def _skip(self, *_):
+    def _close(self):
+        self.remaining = None
         self.destroy()
+
+    def _skip(self, *_):
+        self._close()
         self.on_skip()
 
     def _postpone(self, *_):
-        self.destroy()
+        self._close()
         self.on_postpone()
 
     def _on_key(self, widget, event):
@@ -517,13 +519,10 @@ class BreakApp:
     def _postpone_seconds(self, is_break):
         return self.cfg["POSTPONE"] if is_break else self.cfg["MICRO_POSTPONE"]
 
-    def _postpone_text(self, is_break):
-        return self._fmt_duration(self._postpone_seconds(is_break))
-
     def _open_popup(self, big, small, is_break, auto_hide_sec=None):
         self._dismiss_popup(is_break)
         popup = NotifyPopup(
-            big, small, self._postpone_text(is_break),
+            big, small,
             on_skip=lambda: self._pause_finished(is_break, skipped=True),
             on_postpone=lambda: self._pause_postponed(is_break),
             is_break=is_break,
@@ -548,7 +547,7 @@ class BreakApp:
             duration = self.cfg["MICRO_DURATION"]
             title = "Micro-pause"
         self.active_window = FullscreenPause(
-            title, duration, self._postpone_text(is_break),
+            title, duration,
             on_done=lambda: self._pause_finished(is_break),
             on_postpone=lambda: self._pause_postponed(is_break),
             is_break=is_break,
