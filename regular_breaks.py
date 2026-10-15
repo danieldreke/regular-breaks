@@ -635,6 +635,8 @@ class BreakApp:
 
         if self.micro_disabled:
             micro_text = f"Next {micro_dur_text} micro-pause: disabled"
+        elif not self.break_disabled and self.next_break - now < self.cfg["MICRO_INTERVAL"]:
+            micro_text = f"Next {micro_dur_text} micro-pause: after break"
         else:
             micro_text = f"Next {micro_dur_text} micro-pause in {self._fmt(self.next_micro - now)}"
 
@@ -763,6 +765,9 @@ class BreakApp:
 
     def _process_micro(self, now):
         if not self.break_disabled and self.next_break - now < self.cfg["MICRO_INTERVAL"]:
+            if self.micro_stage is not None:
+                self.micro_stage = None
+                self._dismiss_popup(False)
             return
         remaining = self.next_micro - now
         dur_text = self._fmt_duration(self.cfg["MICRO_DURATION"])

@@ -6,7 +6,9 @@ A micro-pause is skipped when the time left until the next break is shorter than
 
 Finishing a break restarts both timers from that moment. A disabled break timer does not suppress micro-pauses.
 
-Implemented in `regular_breaks.py`: `_process_micro` returns early on that gap, and `_pause_finished` resets `next_break` and `next_micro` when a break ends.
+While that skip is active, the tray says the next micro-pause is "after break" and does not count it down. A micro-pause countdown already open is dismissed.
+
+Implemented in `regular_breaks.py`: `_process_micro` returns early on that gap, `_update_status_label` shows "after break", and `_pause_finished` resets `next_break` and `next_micro` when a break ends.
 
 ## A long enough screen lock counts as the pause
 
