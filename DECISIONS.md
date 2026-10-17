@@ -10,10 +10,12 @@ While that skip is active, the tray says the next micro-pause is "after break" a
 
 Implemented in `regular_breaks.py`: `_process_micro` returns early on that gap, `_update_status_label` shows "after break", and `_pause_finished` resets `next_break` and `next_micro` when a break ends.
 
-## A long enough screen lock counts as the pause
+## A screen lock resets the micro-pause timer
 
-On unlock, the app reads how long the logind session stayed locked (`LockedHint`). A lock of at least `MICRO_DURATION` restarts the micro-pause timer for a full `MICRO_INTERVAL`. A lock of at least `BREAK_DURATION` restarts the break timer for a full `BREAK_INTERVAL`. Each restart is measured from unlock, and that timer's notice is cleared.
+Every lock restarts the micro-pause timer for a full `MICRO_INTERVAL`, and every unlock does that again. Neither restart depends on how long the screen stayed locked. The break timer still restarts on unlock only when the lock lasted at least `BREAK_DURATION`. Each restart is measured from that event, and that timer's notice is cleared.
 
-A break or micro-pause does not start while the screen is locked. `tick()` updates the tray label and returns while `locked_at` is set, so a timer that becomes due behind the lock screen waits until unlock. A long enough lock then restarts that timer before the next tick. A shorter lock leaves the timer as it is, so an overdue pause starts on the first tick after unlock. "Take Break Now" and "Take Micro-pause Now" still start immediately.
+A break or micro-pause does not start while the screen is locked. `tick()` updates the tray label and returns while `locked_at` is set. "Take Break Now" and "Take Micro-pause Now" still start immediately.
 
-Implemented in `regular_breaks.py`: `_watch_screen_lock`, `_on_screen_locked`, and the `locked_at` return in `tick()`.
+Sleep and wake each restart both timers for a full interval. logind `PrepareForSleep` sets `asleep` before sleep and clears it on wake. If `tick()` runs first after resume, `asleep` is still set, so that tick restarts both timers and does not start a pause.
+
+Implemented in `regular_breaks.py`: `_on_screen_locked`, `_reset_timer`, `_on_prepare_for_sleep`, and the `locked_at` and `asleep` returns in `tick()`.

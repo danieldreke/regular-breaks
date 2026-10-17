@@ -332,6 +332,7 @@ class BreakApp:
         self.paused_until = None
         self.pause_label = None
         self.locked_at = None
+        self.asleep = False
         self.log_path = LOG_PATH
 
         self.indicator = AppIndicator3.Indicator.new(
@@ -420,17 +421,22 @@ class BreakApp:
         self._watch_screensaver()
 
     def _watch_logind_lock(self):
-        session_id = os.environ.get("XDG_SESSION_ID", "")
-        if not session_id:
-            return
         try:
             bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
-            manager = Gio.DBusProxy.new_sync(
+            self._login_manager = Gio.DBusProxy.new_sync(
                 bus, Gio.DBusProxyFlags.NONE, None,
                 "org.freedesktop.login1", "/org/freedesktop/login1",
                 "org.freedesktop.login1.Manager", None,
             )
-            session_path = manager.call_sync(
+            self._login_manager.connect("g-signal", self._on_prepare_for_sleep)
+        except GLib.Error as error:
+            print(f"logind sleep watch unavailable: {error.message}", file=sys.stderr)
+            return
+        session_id = os.environ.get("XDG_SESSION_ID", "")
+        if not session_id:
+            return
+        try:
+            session_path = self._login_manager.call_sync(
                 "GetSession", GLib.Variant("(s)", (session_id,)),
                 Gio.DBusCallFlags.NONE, -1, None,
             ).unpack()[0]
@@ -472,29 +478,48 @@ class BreakApp:
         if signal == "ActiveChanged":
             self._on_screen_locked(params.unpack()[0])
 
+    def _on_prepare_for_sleep(self, _proxy, _sender, signal, params):
+        if signal != "PrepareForSleep":
+            return
+        now = time.time()
+        sleeping = params.unpack()[0]
+        self.asleep = bool(sleeping)
+        reason = "sleep" if sleeping else "wakeup"
+        self._reset_timer(True, now, reason)
+        self._reset_timer(False, now, reason)
+        self._update_status_label(now)
+
     def _on_screen_locked(self, locked):
         now = time.time()
         if locked:
             if self.locked_at is None:
                 self.locked_at = now
                 self._log("screen locked")
+                self._reset_timer(False, now, "screen lock")
+                self._update_status_label(now)
             return
         if self.locked_at is None:
             return
         locked_for = now - self.locked_at
         self.locked_at = None
         self._log("screen unlocked")
-        if locked_for >= self.cfg["MICRO_DURATION"]:
-            self.next_micro = self._due_after_pause(now + self.cfg["MICRO_INTERVAL"])
-            self.micro_stage = None
-            self._dismiss_popup(False)
-            self._log("micro timer reset by screen unlock")
+        self._reset_timer(False, now, "screen unlock")
         if locked_for >= self.cfg["BREAK_DURATION"]:
-            self.next_break = self._due_after_pause(now + self.cfg["BREAK_INTERVAL"])
-            self.break_stage = None
-            self._dismiss_popup(True)
-            self._log("break timer reset by screen unlock")
+            self._reset_timer(True, now, "screen unlock")
         self._update_status_label(now)
+
+    def _reset_timer(self, is_break, now, reason):
+        interval = self.cfg["BREAK_INTERVAL" if is_break else "MICRO_INTERVAL"]
+        due = self._due_after_pause(now + interval)
+        if is_break:
+            self.next_break = due
+            self.break_stage = None
+            self._log(f"break timer reset by {reason}")
+        else:
+            self.next_micro = due
+            self.micro_stage = None
+            self._log(f"micro timer reset by {reason}")
+        self._dismiss_popup(is_break)
 
     def _due_after_pause(self, due):
         if self.paused_until is not None and due < self.paused_until:
@@ -786,9 +811,15 @@ class BreakApp:
                 self.popups[False].set_text(big, small)
 
     def tick(self):
+        now = time.time()
+        if self.asleep:
+            self.asleep = False
+            self._reset_timer(True, now, "wakeup")
+            self._reset_timer(False, now, "wakeup")
+            self._update_status_label(now)
+            return True
         if self.active_window is not None:
             return True
-        now = time.time()
         if self.paused_until is not None:
             if now < self.paused_until:
                 self._update_status_label(now)
