@@ -3,17 +3,18 @@
 
     curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 -
     curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --install
-    curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --update
 """
 import argparse
 import io
 import os
+import stat
 import subprocess
 import sys
 import tarfile
 import urllib.request
 
 REPO = "danieldreke/regular-breaks"
+PROJECT_NAME = REPO.split("/")[-1]
 
 
 def fetch_tarball(ref):
@@ -43,12 +44,21 @@ def extract(data, dest):
                 raise ValueError(f"unsafe path in archive: {member.name}")
             member.name = rel_path
             tar.extract(member, path=dest_abs)
+    for name in ("download.py", "update.py", "install.py"):
+        path = os.path.join(dest_abs, name)
+        if os.path.isfile(path):
+            os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def download_into(dest, ref="main"):
+    os.makedirs(dest, exist_ok=True)
+    extract(fetch_tarball(ref), dest)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Download Regular Breaks")
     parser.add_argument(
-        "--dir", default="regular-breaks",
+        "--dir", default=PROJECT_NAME,
         help="target directory to download into (default: regular-breaks)",
     )
     parser.add_argument(
@@ -59,22 +69,15 @@ def main():
         "--install", action="store_true",
         help="run install.py in the downloaded directory afterwards",
     )
-    parser.add_argument(
-        "--update", action="store_true",
-        help="overwrite an existing --dir with the latest files instead of erroring",
-    )
     args = parser.parse_args()
 
     dest = os.path.abspath(args.dir)
-    if os.path.exists(dest) and os.listdir(dest) and not args.update:
+    if os.path.exists(dest) and os.listdir(dest):
         print(f"Error: {dest} already exists and is not empty.", file=sys.stderr)
-        print("Remove it, pass --dir to choose a different location, or pass --update to overwrite.", file=sys.stderr)
+        print("Remove it, pass --dir to choose a different location, or run update.py from the app folder.", file=sys.stderr)
         sys.exit(1)
-    os.makedirs(dest, exist_ok=True)
-
-    data = fetch_tarball(args.ref)
-    extract(data, dest)
-    print(f"{'Updated' if args.update else 'Downloaded to'} {dest}/")
+    download_into(dest, args.ref)
+    print(f"Downloaded to {dest}/")
 
     if args.install:
         print("Running install.py ...")

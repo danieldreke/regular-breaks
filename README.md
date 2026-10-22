@@ -48,14 +48,13 @@ icon's **Start on login** menu item for that (see below).
 
 ## Update
 
-Re-downloads into an existing `--dir` instead of refusing to touch it,
-overwriting the app's own files with the latest version:
+From inside the app folder:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --update --install
+./update.py
 ```
 
-`config.txt` isn't part of the repository, so your settings are left alone.
+This replaces the app files in that folder. It does not create another `regular-breaks` folder. `config.txt` is not part of the download, so your settings stay. Quit the tray app and start it again so it runs the new code.
 
 ## Uninstall
 
