@@ -62,7 +62,10 @@ def main():
     if not check_dependencies():
         sys.exit(1)
 
-    os.chmod(SCRIPT_PATH, os.stat(SCRIPT_PATH).st_mode | stat.S_IEXEC)
+    for name in ("regular_breaks.py", "download.py", "update.py", "install.py", "uninstall.py", "restart.py"):
+        path = os.path.join(SCRIPT_DIR, name)
+        if os.path.isfile(path):
+            os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
     install_desktop_launcher()
 
     print()

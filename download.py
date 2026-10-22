@@ -44,7 +44,7 @@ def extract(data, dest):
                 raise ValueError(f"unsafe path in archive: {member.name}")
             member.name = rel_path
             tar.extract(member, path=dest_abs)
-    for name in ("download.py", "update.py", "install.py"):
+    for name in ("download.py", "update.py", "install.py", "uninstall.py", "restart.py", "regular_breaks.py"):
         path = os.path.join(dest_abs, name)
         if os.path.isfile(path):
             os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

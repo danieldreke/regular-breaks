@@ -2,7 +2,7 @@
 """Uninstall Regular Breaks: removes the app-menu launcher and any autostart entry.
 
 Leaves config.txt, icons/, and the repo itself untouched.
-Run from the repo directory: python3 uninstall.py
+Run from the repo directory: ./uninstall.py
 """
 import os
 

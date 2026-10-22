@@ -19,58 +19,45 @@ On Debian/Ubuntu:
 sudo apt install python3-gi gir1.2-ayatanaappindicator3-0.1
 ```
 
-## Install
+## Download
 
-The quickest way — no `git` required. Downloads the repo into
-`./regular-breaks` and installs it in one step:
-
-```
-curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 - --install
-```
-
-Leave off `--install` to just download the files without installing:
+From the folder where you want the app. This creates `regular-breaks` and does not install it:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 -
 ```
 
-If you already have the repo locally (e.g. via `git clone`), install
-directly instead:
+## Install
+
+From inside the app folder. This checks the dependencies above, marks the scripts executable, and adds a Regular Breaks entry to your application menu. It does not enable autostart. Use the tray icon's **Start on login** menu item for that.
 
 ```
-python3 install.py
+./install.py
 ```
-
-Either way, install checks that the dependencies above are present, makes
-`regular_breaks.py` executable, and adds a "Regular Breaks" entry to
-your application menu. It does not enable autostart — use the tray
-icon's **Start on login** menu item for that (see below).
 
 ## Update
 
-From inside the app folder:
+From inside the app folder. This replaces the app files there and does not create another `regular-breaks` folder. `config.txt` is not part of the download, so your settings stay. Restart so the tray app runs the new code:
 
 ```
 ./update.py
+./restart.py
 ```
-
-This replaces the app files in that folder. It does not create another `regular-breaks` folder. `config.txt` is not part of the download, so your settings stay. Quit the tray app and start it again so it runs the new code.
 
 ## Uninstall
 
-```
-python3 uninstall.py
-```
+From inside the app folder. This removes the application menu entry and any autostart entry created via **Start on login**. `config.txt` and `icons/` are left in place.
 
-Removes the application menu entry and any autostart entry created via
-"Start on login". `config.txt` and `icons/` are left in place.
+```
+./uninstall.py
+```
 
 ## Usage
 
 Run directly, or launch "Regular Breaks" from your application menu:
 
 ```
-python3 regular_breaks.py
+./regular_breaks.py
 ```
 
 A coffee-cup icon appears in the tray. Its menu shows the time until
@@ -116,7 +103,7 @@ required; bare numbers aren't valid.
 ## Debug mode
 
 ```
-python3 regular_breaks.py -d [SPEED]
+./regular_breaks.py -d [SPEED]
 ```
 
 Runs with a separate set of short, in-script durations instead of
