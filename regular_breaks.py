@@ -44,6 +44,7 @@ DEBUG_DEFAULTS = {
 }
 
 _DURATION_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+PAUSE_OPTIONS_DEFAULT = ("30m", "1h", "2h")
 
 
 def parse_duration(text):
@@ -55,6 +56,53 @@ def parse_duration(text):
     if h == 0 and m == 0 and s == 0:
         raise ValueError(f"invalid duration: {text!r}")
     return h * 3600 + m * 60 + s
+
+
+def format_duration(seconds):
+    seconds = int(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return "".join(parts)
+
+
+def load_pause_options():
+    options = [parse_duration(value) for value in PAUSE_OPTIONS_DEFAULT]
+    if not os.path.exists(CONFIG_PATH):
+        return options
+    with open(CONFIG_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            if key.strip().upper() != "PAUSE_OPTIONS":
+                continue
+            parsed = []
+            try:
+                for part in val.split(","):
+                    part = part.strip()
+                    if part:
+                        parsed.append(parse_duration(part))
+            except ValueError:
+                return options
+            if parsed:
+                return parsed
+    return options
+
+
+def save_config(cfg, pause_options):
+    with open(CONFIG_PATH, "w") as f:
+        for key in DEFAULTS:
+            f.write(f"{key}={format_duration(cfg[key])}\n")
+        f.write("PAUSE_OPTIONS=" + ",".join(format_duration(seconds) for seconds in pause_options) + "\n")
+
 
 def build_css():
     base_pt = system_font_pt()
@@ -320,7 +368,9 @@ class FullscreenPause(Gtk.Window):
 
 class BreakApp:
     def __init__(self, debug=False, debug_speed=1):
+        self.debug = debug
         self.cfg = debug_cfg(debug_speed) if debug else load_config()
+        self.pause_options = load_pause_options()
         now = time.time()
         self.next_break = now + self.cfg["BREAK_INTERVAL"]
         self.next_micro = now + self.cfg["MICRO_INTERVAL"]
@@ -381,14 +431,9 @@ class BreakApp:
         reset_item.connect("activate", self.on_reset)
         self.menu.append(reset_item)
 
-        pause_item = Gtk.MenuItem(label="Pause timers")
-        pause_submenu = Gtk.Menu()
-        for label, minutes in (("30 min", 30), ("1 hour", 60), ("2 hours", 120)):
-            entry = Gtk.MenuItem(label=label)
-            entry.connect("activate", self.on_pause_timers, minutes, label)
-            pause_submenu.append(entry)
-        pause_item.set_submenu(pause_submenu)
-        self.menu.append(pause_item)
+        self.pause_item = Gtk.MenuItem(label="Pause timers")
+        self._fill_pause_submenu()
+        self.menu.append(self.pause_item)
 
         self.disable_break_item = Gtk.CheckMenuItem(label="Disable break timer")
         self.disable_break_item.connect("toggled", self.on_toggle_disable_break)
@@ -399,6 +444,10 @@ class BreakApp:
         self.menu.append(self.disable_micro_item)
 
         self.menu.append(Gtk.SeparatorMenuItem())
+
+        settings_item = Gtk.MenuItem(label="Settings")
+        settings_item.connect("activate", self.on_settings)
+        self.menu.append(settings_item)
 
         log_item = Gtk.MenuItem(label="Show log")
         log_item.connect("activate", self.on_show_log)
@@ -787,6 +836,129 @@ class BreakApp:
             self.micro_disabled_at = None
         self._log(f"{self._kind(is_break)} timer enabled")
 
+    def _fill_pause_submenu(self):
+        menu = Gtk.Menu()
+        for seconds in self.pause_options:
+            label = self._fmt_duration(seconds)
+            entry = Gtk.MenuItem(label=label)
+            entry.connect("activate", self.on_pause_timers, seconds, label)
+            menu.append(entry)
+        menu.show_all()
+        self.pause_item.set_submenu(menu)
+
+    def on_settings(self, *_):
+        dialog = Gtk.Dialog(
+            title="Settings",
+            modal=True,
+            buttons=("_Cancel", Gtk.ResponseType.CANCEL, "_Save", Gtk.ResponseType.OK),
+        )
+        dialog.set_resizable(False)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_margin_start(16)
+        content.set_margin_end(16)
+        content.set_margin_top(12)
+        content.set_margin_bottom(8)
+
+        steps = (5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 21600, 28800)
+        values = {}
+
+        def add_stepper(title, key):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.set_margin_top(6)
+            row.set_margin_bottom(6)
+            row.set_margin_start(10)
+            row.set_margin_end(10)
+            name = Gtk.Label(label=title, halign=Gtk.Align.START)
+            name.set_width_chars(20)
+            name.set_xalign(0)
+            value_label = Gtk.Label()
+            value_label.set_width_chars(10)
+            current = [self.cfg[key]]
+
+            def show():
+                value_label.set_text(self._fmt_duration(current[0]))
+
+            def move(direction):
+                ordered = [step for step in steps if (step < current[0] if direction < 0 else step > current[0])]
+                if ordered:
+                    current[0] = ordered[-1] if direction < 0 else ordered[0]
+                show()
+
+            minus = Gtk.Button.new_from_icon_name("list-remove-symbolic", Gtk.IconSize.BUTTON)
+            plus = Gtk.Button.new_from_icon_name("list-add-symbolic", Gtk.IconSize.BUTTON)
+            minus.connect("clicked", lambda *_: move(-1))
+            plus.connect("clicked", lambda *_: move(1))
+            show()
+            row.pack_start(name, False, False, 0)
+            row.pack_end(plus, False, False, 0)
+            row.pack_end(value_label, False, False, 0)
+            row.pack_end(minus, False, False, 0)
+            values[key] = current
+            return row
+
+        timers = Gtk.ListBox()
+        timers.set_selection_mode(Gtk.SelectionMode.NONE)
+        for title, key in (
+            ("Break interval", "BREAK_INTERVAL"),
+            ("Break duration", "BREAK_DURATION"),
+            ("Micro-pause interval", "MICRO_INTERVAL"),
+            ("Micro-pause duration", "MICRO_DURATION"),
+        ):
+            timers.add(add_stepper(title, key))
+        content.pack_start(timers, False, False, 0)
+
+        pause_title = Gtk.Label(label="Pause timers options", halign=Gtk.Align.START)
+        content.pack_start(pause_title, False, False, 0)
+        pause_choices = (10 * 60, 20 * 60, 30 * 60, 3600, 2 * 3600, 4 * 3600, 8 * 3600)
+        selected = set(self.pause_options)
+        toggles = []
+        pause_box = Gtk.FlowBox()
+        pause_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        pause_box.set_homogeneous(True)
+        pause_box.set_min_children_per_line(4)
+        pause_box.set_max_children_per_line(4)
+        pause_box.set_column_spacing(8)
+        pause_box.set_row_spacing(8)
+        for seconds in pause_choices:
+            button = Gtk.ToggleButton(label=self._fmt_duration(seconds))
+            button.seconds = seconds
+            button.set_active(seconds in selected)
+            toggles.append(button)
+            pause_box.add(button)
+
+        def keep_one_active(button):
+            if button.get_active() or any(other.get_active() for other in toggles):
+                return
+            button.set_active(True)
+
+        for button in toggles:
+            button.connect("toggled", keep_one_active)
+        if not any(button.get_active() for button in toggles):
+            toggles[2].set_active(True)
+        content.pack_start(pause_box, False, False, 0)
+
+        dialog.vbox.pack_start(content, True, True, 0)
+        dialog.show_all()
+        if dialog.run() == Gtk.ResponseType.OK:
+            chosen = [button.seconds for button in toggles if button.get_active()]
+            self._apply_settings({key: current[0] for key, current in values.items()}, chosen)
+        dialog.destroy()
+
+    def _apply_settings(self, values, pause_options):
+        now = time.time()
+        if values["BREAK_INTERVAL"] != self.cfg["BREAK_INTERVAL"]:
+            self.next_break = now + values["BREAK_INTERVAL"]
+        if values["MICRO_INTERVAL"] != self.cfg["MICRO_INTERVAL"]:
+            self.next_micro = now + values["MICRO_INTERVAL"]
+        self.cfg.update(values)
+        self.pause_options = pause_options
+        self._fill_pause_submenu()
+        self._sync_hold(now)
+        self._update_status_label(now)
+        if not self.debug:
+            save_config(self.cfg, pause_options)
+        self._log("settings saved")
+
     def on_show_log(self, *_):
         if not os.path.exists(self.log_path):
             open(self.log_path, "a").close()
@@ -802,9 +974,9 @@ class BreakApp:
         elif os.path.exists(AUTOSTART_DESKTOP_PATH):
             os.remove(AUTOSTART_DESKTOP_PATH)
 
-    def on_pause_timers(self, _item, minutes, label):
+    def on_pause_timers(self, _item, seconds, label):
         now = time.time()
-        new_until = now + minutes * 60
+        new_until = now + seconds
         if self.paused_until is not None and self.paused_until > now:
             shift = new_until - self.paused_until
         else:
