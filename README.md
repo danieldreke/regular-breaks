@@ -27,31 +27,6 @@ From the folder where you want the app. This creates `regular-breaks` and does n
 curl -fsSL https://raw.githubusercontent.com/danieldreke/regular-breaks/main/download.py | python3 -
 ```
 
-## Install
-
-From inside the app folder. This checks the dependencies above, marks the scripts executable, and adds a Regular Breaks entry to your application menu. It does not enable autostart. Use the tray icon's **Start on login** menu item for that.
-
-```
-./install.py
-```
-
-## Update
-
-From inside the app folder. This replaces the app files there and does not create another `regular-breaks` folder. `config.txt` is not part of the download, so your settings stay. Restart so the tray app runs the new code:
-
-```
-./update.py
-./restart.py
-```
-
-## Uninstall
-
-From inside the app folder. This removes the application menu entry and any autostart entry created via **Start on login**. `config.txt` and `icons/` are left in place.
-
-```
-./uninstall.py
-```
-
 ## Usage
 
 Run directly, or launch "Regular Breaks" from your application menu:
@@ -76,6 +51,31 @@ As a break or micro-pause approaches, a small notification appears in
 the corner with a final countdown. When it fires, a fullscreen overlay
 takes over the screen; **Skip** or **Postpone** dismiss it (Escape
 also skips a break).
+
+## Install
+
+From inside the app folder. This checks the dependencies above, marks the scripts executable, and adds a Regular Breaks entry to your application menu. It does not enable autostart. Use the tray icon's **Start on login** menu item for that.
+
+```
+./install.py
+```
+
+## Update
+
+From inside the app folder. This replaces the app files there and does not create another `regular-breaks` folder. `config.txt` is not part of the download, so your settings stay. Restart so the tray app runs the new code:
+
+```
+./update.py
+./restart.py
+```
+
+## Uninstall
+
+From inside the app folder. This removes the application menu entry and any autostart entry created via **Start on login**. `config.txt` and `icons/` are left in place.
+
+```
+./uninstall.py
+```
 
 ## Configuration
 
