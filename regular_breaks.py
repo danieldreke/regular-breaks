@@ -333,6 +333,9 @@ class BreakApp:
         self.pause_label = None
         self.locked_at = None
         self.asleep = False
+        self.held_at = None
+        self.held_break_remaining = None
+        self.held_micro_remaining = None
         self.log_path = LOG_PATH
 
         self.indicator = AppIndicator3.Indicator.new(
@@ -449,6 +452,7 @@ class BreakApp:
             locked = self._session.get_cached_property("LockedHint")
             if locked is not None and locked.unpack():
                 self.locked_at = time.time()
+                self._begin_hold(self.locked_at)
         except GLib.Error as error:
             print(f"logind lock watch unavailable: {error.message}", file=sys.stderr)
 
@@ -482,12 +486,25 @@ class BreakApp:
         if signal != "PrepareForSleep":
             return
         now = time.time()
-        sleeping = params.unpack()[0]
-        self.asleep = bool(sleeping)
-        reason = "sleep" if sleeping else "wakeup"
-        self._reset_timer(True, now, reason)
-        self._reset_timer(False, now, reason)
-        self._update_status_label(now)
+        if params.unpack()[0]:
+            if not self.asleep:
+                self.asleep = True
+                self._log("sleep")
+                self._begin_hold(now)
+                self._update_status_label(now)
+            return
+        self._on_wake(now)
+
+    def _on_wake(self, now):
+        was_asleep = self.asleep
+        self.asleep = False
+        if was_asleep:
+            self._log("wakeup")
+        if self.locked_at is not None:
+            self._update_status_label(now)
+            return
+        if self.held_at is not None:
+            self._finish_hold(now, "wakeup")
 
     def _on_screen_locked(self, locked):
         now = time.time()
@@ -495,31 +512,63 @@ class BreakApp:
             if self.locked_at is None:
                 self.locked_at = now
                 self._log("screen locked")
-                self._reset_timer(False, now, "screen lock")
+                self._begin_hold(now)
                 self._update_status_label(now)
             return
         if self.locked_at is None:
             return
-        locked_for = now - self.locked_at
         self.locked_at = None
         self._log("screen unlocked")
-        self._reset_timer(False, now, "screen unlock")
-        if locked_for >= self.cfg["BREAK_DURATION"]:
-            self._reset_timer(True, now, "screen unlock")
-        self._update_status_label(now)
+        in_micro = self.active_window is not None and not self.active_window.is_break
+        if not in_micro:
+            if self.held_at is not None:
+                self.held_micro_remaining = self.cfg["MICRO_INTERVAL"]
+            else:
+                self.next_micro = self._due_after_pause(now + self.cfg["MICRO_INTERVAL"])
+            self.micro_stage = None
+            self._dismiss_popup(False)
+            self._log("micro timer reset by screen unlock")
+        if self.asleep:
+            self._update_status_label(now)
+            return
+        if self.held_at is not None:
+            self._finish_hold(now, "screen unlock")
+        else:
+            self._update_status_label(now)
 
-    def _reset_timer(self, is_break, now, reason):
-        interval = self.cfg["BREAK_INTERVAL" if is_break else "MICRO_INTERVAL"]
-        due = self._due_after_pause(now + interval)
-        if is_break:
-            self.next_break = due
+    def _begin_hold(self, now):
+        if self.held_at is not None:
+            return
+        self.held_at = now
+        self.held_break_remaining = self.next_break - now
+        self.held_micro_remaining = self.next_micro - now
+        self.break_stage = None
+        self.micro_stage = None
+        self._dismiss_popup(True)
+        self._dismiss_popup(False)
+
+    def _finish_hold(self, now, reason):
+        elapsed = now - self.held_at
+        break_remaining = self.held_break_remaining
+        micro_remaining = self.held_micro_remaining
+        self.held_at = None
+        self.held_break_remaining = None
+        self.held_micro_remaining = None
+        self.next_micro = now + micro_remaining
+        if elapsed >= self.cfg["BREAK_DURATION"]:
+            self.next_break = self._due_after_pause(now + self.cfg["BREAK_INTERVAL"])
             self.break_stage = None
+            self._dismiss_popup(True)
             self._log(f"break timer reset by {reason}")
         else:
-            self.next_micro = due
-            self.micro_stage = None
-            self._log(f"micro timer reset by {reason}")
-        self._dismiss_popup(is_break)
+            self.next_break = now + break_remaining
+        self._update_status_label(now)
+
+    def _sync_hold(self, now):
+        if self.held_at is None:
+            return
+        self.held_break_remaining = self.next_break - now
+        self.held_micro_remaining = self.next_micro - now
 
     def _due_after_pause(self, due):
         if self.paused_until is not None and due < self.paused_until:
@@ -595,6 +644,7 @@ class BreakApp:
         else:
             self.next_micro = now + self.cfg["MICRO_INTERVAL"]
             self.micro_stage = None
+        self._sync_hold(now)
 
     def _pause_postponed(self, is_break):
         self.active_window = None
@@ -607,6 +657,7 @@ class BreakApp:
         else:
             self.next_micro = now + postpone_sec
             self.micro_stage = None
+        self._sync_hold(now)
         self._log(f"{self._kind(is_break)} postponed")
 
     @staticmethod
@@ -653,17 +704,20 @@ class BreakApp:
         self.break_item.show()
         self.micro_item.show()
 
+        break_remaining = self.held_break_remaining if self.held_at is not None else self.next_break - now
+        micro_remaining = self.held_micro_remaining if self.held_at is not None else self.next_micro - now
+
         if self.break_disabled:
             break_text = f"Next {break_dur_text} break: disabled"
         else:
-            break_text = f"Next {break_dur_text} break in {self._fmt(self.next_break - now)}"
+            break_text = f"Next {break_dur_text} break in {self._fmt(break_remaining)}"
 
         if self.micro_disabled:
             micro_text = f"Next {micro_dur_text} micro-pause: disabled"
-        elif not self.break_disabled and self.next_break - now < self.cfg["MICRO_INTERVAL"]:
+        elif not self.break_disabled and break_remaining < self.cfg["MICRO_INTERVAL"]:
             micro_text = f"Next {micro_dur_text} micro-pause: after break"
         else:
-            micro_text = f"Next {micro_dur_text} micro-pause in {self._fmt(self.next_micro - now)}"
+            micro_text = f"Next {micro_dur_text} micro-pause in {self._fmt(micro_remaining)}"
 
         self.break_item.set_label(break_text)
         self.micro_item.set_label(micro_text)
@@ -679,6 +733,7 @@ class BreakApp:
         self.pause_label = None
         self._dismiss_popup(True)
         self._dismiss_popup(False)
+        self._sync_hold(now)
         if widget is self.resume_item:
             self._log("break timer reset")
             self._log("micro timer reset")
@@ -813,10 +868,7 @@ class BreakApp:
     def tick(self):
         now = time.time()
         if self.asleep:
-            self.asleep = False
-            self._reset_timer(True, now, "wakeup")
-            self._reset_timer(False, now, "wakeup")
-            self._update_status_label(now)
+            self._on_wake(now)
             return True
         if self.active_window is not None:
             return True
