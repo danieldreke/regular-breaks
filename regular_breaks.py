@@ -3,7 +3,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("AyatanaAppIndicator3", "0.1")
 from gi.repository import Gtk, GLib, Gdk, Gio, AyatanaAppIndicator3 as AppIndicator3
-import argparse, os, re, sys, time
+import argparse, fcntl, os, re, sys, time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.abspath(__file__)
@@ -1077,7 +1077,19 @@ def _debug_speed(value):
     return v
 
 
+def acquire_single_instance():
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    handle = open(os.path.join(runtime_dir, "regular-breaks.lock"), "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("regular-breaks is already running", file=sys.stderr)
+        sys.exit(0)
+    return handle
+
+
 def main():
+    single_instance = acquire_single_instance()
     parser = argparse.ArgumentParser(description="Regular breaks tray app")
     parser.add_argument(
         "-d", "--debug", nargs="?", type=_debug_speed, const=1, default=None,
