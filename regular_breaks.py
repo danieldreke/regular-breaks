@@ -135,7 +135,7 @@ def system_font_pt():
 
 
 class NotifyPopup(Gtk.Window):
-    def __init__(self, big, small, on_skip, on_postpone):
+    def __init__(self, big, small, on_now, on_skip, on_postpone):
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
@@ -148,7 +148,7 @@ class NotifyPopup(Gtk.Window):
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
         self.set_resizable(False)
-        self.set_size_request(210, -1)
+        self.set_size_request(280, -1)
         self.get_style_context().add_class("notify-popup")
 
         self.label = Gtk.Label()
@@ -161,15 +161,18 @@ class NotifyPopup(Gtk.Window):
         self.label.set_margin_top(8)
         self.label.set_margin_bottom(4)
 
+        now_btn = Gtk.Button(label="Now")
+        now_btn.connect("clicked", lambda *_: on_now())
         postpone_btn = Gtk.Button(label="Postpone")
         postpone_btn.connect("clicked", lambda *_: on_postpone())
+        skip_btn = Gtk.Button(label="Skip")
+        skip_btn.connect("clicked", lambda *_: on_skip())
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_box.set_halign(Gtk.Align.CENTER)
         btn_box.set_margin_start(13)
         btn_box.set_margin_end(13)
         btn_box.set_margin_bottom(10)
-        skip_btn = Gtk.Button(label="Skip")
-        skip_btn.connect("clicked", lambda *_: on_skip())
+        btn_box.pack_start(now_btn, False, False, 0)
         btn_box.pack_start(postpone_btn, False, False, 0)
         btn_box.pack_start(skip_btn, False, False, 0)
 
@@ -596,6 +599,7 @@ class BreakApp:
         self._dismiss_popup(is_break)
         popup = NotifyPopup(
             big, small,
+            on_now=lambda: self._start_pause(is_break),
             on_skip=lambda: self._pause_finished(is_break, skipped=True),
             on_postpone=lambda: self._pause_postponed(is_break),
         )
